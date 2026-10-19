@@ -52,7 +52,7 @@ label.tog { display: flex; gap: 6px; align-items: center; font-size: 13px; color
 </head>
 <body>
 <header>
-  <h1>🧱 Brique-à-Brac</h1>
+  <div class="row"><h1 class="grow">🧱 Brique-à-Brac</h1><button class="b" data-panel="settings" title="Réglages" style="padding:4px 8px;margin-bottom:8px">⚙️</button></div>
   <nav><button data-tab="sets">Sets</button><button data-tab="pick">Collecte</button></nav>
 </header>
 <main id="main"></main>
@@ -61,6 +61,7 @@ label.tog { display: flex; gap: 6px; align-items: center; font-size: 13px; color
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 let S = null;
+let config = null;     // {has_key, key_hint}
 let view = { tab: ['sets', 'pick'].includes(localGet('tab')) ? localGet('tab') : 'sets', color: null, hideDone: localGet('hideDone') !== '0', focus: localGet('focus') || '' };
 let ident = null;      // last Brickognize result: {photo, items, colors, sel, color, partColors}
 let cands = null;      // candidate sets for current clues
@@ -121,15 +122,34 @@ function swatch(id) {
 }
 
 function render() {
+  const m = $('#main');
+  $('nav').style.display = config?.has_key ? '' : 'none';
+  if (!config?.has_key || panel === 'settings') { m.innerHTML = renderSettings(); return; }
   if (view.focus && !S.queue.includes(view.focus)) setFocus('');
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === view.tab));
-  const m = $('#main');
   if (panel) m.innerHTML = renderIdent();
   else if (view.tab === 'sets') m.innerHTML = renderSets();
   else m.innerHTML = renderFocusBar() + (view.color == null ? renderColors() : renderColor(view.color));
 }
 
-const linkBtn = 'text-decoration:none;border:1px solid var(--line);background:var(--chip);border-radius:8px;padding:8px 12px';
+function renderSettings() {
+  const first = !config?.has_key;
+  return `${first ? '' : `<div class="row" style="margin-bottom:10px"><button class="b" id="close-panel">‹ Retour</button><b class="grow">Réglages</b></div>`}
+    <div class="card">
+      <b>${first ? 'Bienvenue 👋' : 'Clé API Rebrickable'}</b>
+      <p class="mute">${first ? 'Brique-à-Brac récupère les inventaires des sets sur Rebrickable. Il lui faut une clé API, gratuite :' : `Clé actuelle : ${esc(config.key_hint)}. Pour la remplacer :`}</p>
+      <ol class="mute" style="padding-left:20px;margin:0 0 12px">
+        <li>Crée un compte sur <a href="https://rebrickable.com/" target="_blank">rebrickable.com</a></li>
+        <li>Dans ton profil, <b>Settings › API</b>, génère une clé (<a href="https://rebrickable.com/api/" target="_blank">aide</a>)</li>
+        <li>Colle-la ici</li>
+      </ol>
+      <form id="key-form" class="row"><input class="grow" name="key" placeholder="Clé API" autocomplete="off" autocapitalize="off" spellcheck="false">
+        <button class="b">Enregistrer</button></form>
+      <p class="mute" style="margin-bottom:0">La clé reste sur ce serveur, elle n'est jamais renvoyée au navigateur.</p>
+    </div>`;
+}
+
+const linkBtn ='text-decoration:none;border:1px solid var(--line);background:var(--chip);border-radius:8px;padding:8px 12px';
 
 function noticeLinks(s) {
   if (!s.notices?.length) return `<a class="b" style="${linkBtn}" href="https://www.lego.com/fr-fr/service/building-instructions/${esc(short(s.set_num))}" target="_blank">Notice (lego.com)</a>`;
@@ -416,13 +436,25 @@ async function identify(file) {
 
 document.addEventListener('submit', async e => {
   e.preventDefault();
+  if (e.target.id === 'key-form') {
+    const inp = e.target.key; inp.disabled = true; toast('Vérification de la clé…');
+    try {
+      config = await api('/api/config', { rebrickable_api_key: inp.value });
+      panel = null; toast('Clé enregistrée ✅'); await refresh();
+    } catch (err) { toast(err.message); inp.disabled = false; }
+    return;
+  }
   const inp = e.target.n, n = inp.value.trim(); if (!n) return;
   inp.disabled = true; toast('Récupération de l\'inventaire…');
   try { const r = await api('/api/sets', { set_num: n }); await refresh(); toast(`${r.set_num} ajouté`); }
   catch (err) { toast(err.message); inp.disabled = false; }
 });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
-refresh().catch(err => { $('#main').textContent = 'Erreur : ' + err.message; });
+async function start() {
+  config = await api('/api/config');
+  if (config.has_key) await refresh(); else render();
+}
+start().catch(err => { $('#main').textContent = 'Erreur : ' + err.message; });
 </script>
 </body>
 </html>

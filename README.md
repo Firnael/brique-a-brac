@@ -15,37 +15,39 @@ L'app récupère l'inventaire d'un set (Rebrickable) et sort une **liste de coll
 
 ## Lancer
 
-Il faut une clé API Rebrickable (gratuite : rebrickable.com → Settings → API).
+**Avec Docker** (recommandé) : rien à cloner, l'image est publiée sur GHCR.
 
 ```sh
-git clone git@github.com:Firnael/brique-a-brac.git && cd brique-a-brac
-echo "REBRICKABLE_API_KEY=xxxx" > .env
+mkdir brique-a-brac && cd brique-a-brac
+curl -fsSLO https://raw.githubusercontent.com/Firnael/brique-a-brac/main/docker-compose.yml
+docker compose up -d                          # http://<ip-de-la-machine>:8642
 ```
 
-**Avec Docker** (recommandé, ex. sur Proxmox) :
+Mise à jour : `docker compose pull && docker compose up -d`. Le conteneur redémarre tout seul (reboot, crash). Autre port : `PORT=8080 docker compose up -d`.
 
-```sh
-docker compose up -d                 # http://<ip-de-la-machine>:8642
-git pull && docker compose up -d --build   # mise à jour
-```
-
-Le conteneur redémarre tout seul (reboot, crash). Autre port : `PORT=8080 docker compose up -d`.
+Au premier lancement, l'app demande une **clé API Rebrickable** (gratuite : rebrickable.com → profil → Settings → API). Elle est vérifiée puis enregistrée dans `data/config.json`, et se change via ⚙️.
 
 **Sans Docker** : Python 3.12+, aucune dépendance.
 
 ```sh
-python3 server.py                    # http://<ip-de-la-machine>:8642
+git clone https://github.com/Firnael/brique-a-brac.git && cd brique-a-brac
+python3 server.py                             # http://<ip-de-la-machine>:8642
 ```
+
+La clé peut aussi venir de la variable `REBRICKABLE_API_KEY` (ou d'un fichier `.env`) ; celle saisie dans l'app est prioritaire.
 
 ## Données
 
-Tout est dans le dossier `data/` à côté de `docker-compose.yml`, même avec Docker (ignoré par git) :
+Tout est dans le dossier `data/` à côté de `docker-compose.yml` :
 
 - `state.json` : sets, priorité, pièces collectées, sets terminés, indices.
+- `config.json` : clé API Rebrickable.
 - `backups/` : copie de `state.json` avant la première modif de chaque jour, 14 jours gardés.
 - `cache/` : réponses Rebrickable, pages de notices et PDF. Peut être supprimé sans risque.
 
-Sauvegarder = copier `data/state.json`. Changer de machine = copier `data/` dans le nouveau clone avant `docker compose up -d`.
+Sauvegarder = copier `data/`. Changer de machine = copier `data/` à côté du `docker-compose.yml` avant `docker compose up -d`.
+
+L'app n'a pas de comptes : toute personne qui accède à l'URL peut tout modifier, clé API comprise. À garder sur un réseau privé (LAN, Tailscale…).
 
 ## Sources
 

@@ -33,7 +33,36 @@ def load_env():
 
 
 load_env()
-KEY = os.environ.get("REBRICKABLE_API_KEY", "")
+CONFIG_FILE = DATA / "config.json"
+
+
+def api_key():
+    """Key saved from the app wins over the environment one."""
+    if CONFIG_FILE.exists():
+        key = json.loads(CONFIG_FILE.read_text()).get("rebrickable_api_key")
+        if key:
+            return key
+    return os.environ.get("REBRICKABLE_API_KEY", "")
+
+
+def save_api_key(key):
+    # Validate against Rebrickable before saving
+    req = urllib.request.Request(f"{API}/colors/?page_size=1", headers={"Authorization": f"key {key}"})
+    try:
+        urllib.request.urlopen(req, timeout=30).close()
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            return False
+        raise
+    DATA.mkdir(parents=True, exist_ok=True)
+    CONFIG_FILE.write_text(json.dumps({"rebrickable_api_key": key}))
+    CONFIG_FILE.chmod(0o600)
+    return True
+
+
+def config_info():
+    key = api_key()
+    return {"has_key": bool(key), "key_hint": f"…{key[-4:]}" if key else None}
 lock = threading.Lock()
 rate_lock = threading.Lock()
 _last_call = [0.0]
@@ -48,7 +77,7 @@ def rb_get(url):
         if wait > 0:
             time.sleep(wait)
         _last_call[0] = time.time()
-    req = urllib.request.Request(url, headers={"Authorization": f"key {KEY}", "Accept": "application/json"})
+    req = urllib.request.Request(url, headers={"Authorization": f"key {api_key()}", "Accept": "application/json"})
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.load(r)
 
@@ -384,6 +413,10 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         try:
+            if self.path == "/api/config":
+                return self.send(200, config_info())
+            if self.path.startswith("/api/") and not api_key():
+                return self.send(503, {"error": "Clé API Rebrickable manquante"})
             if self.path == "/api/state":
                 with lock:
                     return self.send(200, full_state())
@@ -409,6 +442,15 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         try:
+            if self.path == "/api/config":
+                key = self.body().get("rebrickable_api_key", "").strip()
+                if not re.fullmatch(r"[0-9A-Za-z]{16,64}", key):
+                    return self.send(400, {"error": "Ça ne ressemble pas à une clé Rebrickable"})
+                if not save_api_key(key):
+                    return self.send(400, {"error": "Clé refusée par Rebrickable"})
+                return self.send(200, config_info())
+            if not api_key():
+                return self.send(503, {"error": "Clé API Rebrickable manquante"})
             if self.path == "/api/identify":
                 image = self.rfile.read(int(self.headers.get("Content-Length") or 0))
                 return self.send(200, identify(image))
@@ -471,7 +513,5 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    if not KEY:
-        raise SystemExit("REBRICKABLE_API_KEY manquante (.env ou variable d'environnement)")
     print(f"lego-bordel sur http://0.0.0.0:{PORT}")
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
