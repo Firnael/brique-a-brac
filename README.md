@@ -1,0 +1,44 @@
+# 🧱 Brique-à-Brac
+
+Reconstituer des sets LEGO à partir d'une grosse caisse de pièces en vrac, triées par couleur.
+
+L'app récupère l'inventaire d'un set (Rebrickable) et sort une **liste de collecte par couleur** : on ouvre le sac « gris foncé », on voit toutes les pièces gris foncé à trouver pour ses sets, avec photo, et on les range dans le sac du bon set.
+
+## Fonctionnalités
+
+- **Sets** : ajout par numéro, ou à partir de la photo d'une pièce (Brickognize → sets qui contiennent cette pièce, affinés indice par indice).
+- **Priorité** : l'ordre de la liste décide quel set reçoit une pièce commune à plusieurs sets.
+- **Collecte** par couleur puis par catégorie, pour tous les sets en cours ou un seul (« Monter ce set »). Alerte sur les couleurs faciles à confondre (Dark Gray / Dark Bluish Gray…).
+- **Identifier une pièce** : photo → nom, référence, et si un de ses sets en a besoin.
+- **Notice** : PDF officiel LEGO, mis en cache par le serveur.
+- **Commande groupée** : une seule wanted list BrickLink avec les manquants de plusieurs sets.
+
+## Lancer
+
+Python 3.12+, aucune dépendance.
+
+```sh
+echo "REBRICKABLE_API_KEY=xxxx" > .env   # clé gratuite : rebrickable.com → Settings → API
+python3 server.py                         # http://<ip-de-la-machine>:8642
+```
+
+Avec Docker (ex. sur Proxmox) :
+
+```sh
+docker build -t brique-a-brac .
+docker run -d -p 8642:8642 -v brique-data:/data -e REBRICKABLE_API_KEY=xxxx brique-a-brac
+```
+
+## Données
+
+Tout est dans `data/` (ignoré par git) :
+
+- `state.json` : sets, priorité, pièces collectées, sets terminés, indices.
+- `backups/` : copie de `state.json` avant la première modif de chaque jour, 14 jours gardés.
+- `cache/` : réponses Rebrickable, pages de notices et PDF. Peut être supprimé sans risque.
+
+## Sources
+
+- [Rebrickable API](https://rebrickable.com/api/v3/docs/) : inventaires, couleurs, catégories, sets par pièce.
+- [Brickognize API](https://api.brickognize.com/docs) : reconnaissance de pièce sur photo (sans clé).
+- lego.com : notices de montage.

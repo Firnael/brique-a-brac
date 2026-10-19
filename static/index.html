@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Brique-à-Brac</title>
+<style>
+:root {
+  --bg: #f6f5f2; --card: #fff; --ink: #1d1d1b; --mute: #6b6b66; --line: #e3e1db;
+  --accent: #d01012; --ok: #2f8f46; --chip: #efede8;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #151514; --card: #201f1d; --ink: #ecebe6; --mute: #9a9993; --line: #34332f; --chip: #2b2a27; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.4 -apple-system, system-ui, sans-serif; }
+header { position: sticky; top: 0; z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line); padding: 10px 16px 0; }
+h1 { font-size: 18px; margin: 0 0 8px; }
+nav { display: flex; gap: 4px; }
+nav button { flex: 1; border: 0; background: none; color: var(--mute); padding: 10px; font: inherit; font-weight: 600; border-bottom: 3px solid transparent; }
+nav button.on { color: var(--ink); border-color: var(--accent); }
+main { padding: 12px 16px 80px; max-width: 760px; margin: 0 auto; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px; margin-bottom: 10px; }
+.row { display: flex; align-items: center; gap: 10px; }
+.grow { flex: 1; min-width: 0; }
+.mute { color: var(--mute); font-size: 13px; }
+button.b { border: 1px solid var(--line); background: var(--chip); color: var(--ink); border-radius: 8px; padding: 8px 12px; font: inherit; }
+button.b:disabled { opacity: .35; }
+input, select { font: inherit; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--ink); }
+.set img { width: 72px; height: 54px; object-fit: contain; background: #fff; border-radius: 6px; }
+.bar { height: 6px; background: var(--chip); border-radius: 3px; overflow: hidden; margin-top: 6px; }
+.bar > i { display: block; height: 100%; background: var(--ok); }
+.sw { width: 30px; height: 30px; border-radius: 7px; border: 1px solid rgba(0,0,0,.2); flex: none; }
+.sw.trans { background-image: linear-gradient(135deg, rgba(255,255,255,.55) 0 30%, transparent 30%); }
+.warn { color: #b26b00; font-size: 12px; }
+.cat { margin: 18px 0 6px; font-weight: 700; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--mute); }
+.part { display: flex; gap: 10px; align-items: center; }
+.part img { width: 64px; height: 64px; object-fit: contain; background: #fff; border-radius: 6px; flex: none; }
+.part.done { opacity: .45; }
+.need { font-size: 22px; font-weight: 700; min-width: 2.2em; text-align: center; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.chip { background: var(--chip); border-radius: 10px; padding: 1px 7px; font-size: 12px; }
+.chip.full { background: var(--ok); color: #fff; }
+.plus { width: 52px; height: 52px; font-size: 26px; border-radius: 12px; border: 0; background: var(--accent); color: #fff; flex: none; }
+.minus { width: 36px; height: 36px; border-radius: 10px; border: 1px solid var(--line); background: var(--chip); color: var(--ink); flex: none; }
+.plus:disabled { background: var(--chip); color: var(--mute); }
+#toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-weight: 600; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 90vw; }
+#toast.show { opacity: 1; }
+a { color: inherit; }
+label.tog { display: flex; gap: 6px; align-items: center; font-size: 13px; color: var(--mute); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🧱 Brique-à-Brac</h1>
+  <nav><button data-tab="sets">Sets</button><button data-tab="pick">Collecte</button></nav>
+</header>
+<main id="main"></main>
+<div id="toast"></div>
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+let S = null;
+let view = { tab: ['sets', 'pick'].includes(localGet('tab')) ? localGet('tab') : 'sets', color: null, hideDone: localGet('hideDone') !== '0', focus: localGet('focus') || '' };
+let ident = null;      // last Brickognize result: {photo, items, colors, sel, color, partColors}
+let cands = null;      // candidate sets for current clues
+let orderOpen = false; // grouped BrickLink order panel
+let panel = null;      // photo screen: 'fromPart' (find a set from clues) | 'identify' (just name a part)
+const hash = location.hash.match(/^#(sets|pick)(?:\/(\d+))?(?:@([\w-]+))?$/);
+if (hash) { view.tab = hash[1]; view.color = hash[2] || null; if (hash[3]) view.focus = hash[3]; }
+
+function localGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
+function localSet(k, v) { try { localStorage.setItem(k, v); } catch {} }
+
+async function api(path, body) {
+  const r = await fetch(path, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {});
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.status);
+  return j;
+}
+async function refresh() { S = await api('/api/state'); render(); }
+
+function toast(msg) {
+  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 1800);
+}
+
+const active = () => S.queue.filter(n => !S.done.includes(n));
+const got = (n, key) => (S.picked[n] || {})[key] || 0;
+const short = n => n.replace(/-1$/, '');
+
+function setFocus(n) { view.focus = n; localSet('focus', n); }
+
+// Aggregate remaining needs of the focused set (or all active sets), by color then part key
+function needs() {
+  const byColor = {};
+  for (const n of view.focus ? [view.focus] : active()) {
+    for (const p of S.sets[n].parts) {
+      const c = byColor[p.color] ??= {};
+      const e = c[p.key] ??= { ...p, need: 0, have: 0, per: [] };
+      e.need += p.qty; e.have += got(n, p.key);
+      e.per.push({ n, qty: p.qty, got: got(n, p.key) });
+    }
+  }
+  return byColor;
+}
+
+// Colors that are easy to mix up with this one (close RGB, same transparency)
+function lookalikes(id) {
+  const c = S.colors[id]; if (!c) return [];
+  const rgb = h => [0, 2, 4].map(i => parseInt(h.substr(i, 2), 16));
+  const a = rgb(c.rgb);
+  return Object.values(S.colors).filter(o => o.id != id && o.is_trans === c.is_trans && o.id > 0 && !o.name.startsWith('[') && S.used_colors.includes(o.id))
+    .map(o => ({ o, d: Math.hypot(...rgb(o.rgb).map((v, i) => v - a[i])) }))
+    .filter(x => x.d < 40).sort((x, y) => x.d - y.d).map(x => x.o.name);
+}
+
+function swatch(id) {
+  const c = S.colors[id] || { rgb: 'ccc', is_trans: false };
+  return `<span class="sw ${c.is_trans ? 'trans' : ''}" style="background-color:#${c.rgb}"></span>`;
+}
+
+function render() {
+  if (view.focus && !S.queue.includes(view.focus)) setFocus('');
+  document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === view.tab));
+  const m = $('#main');
+  if (panel) m.innerHTML = renderIdent();
+  else if (view.tab === 'sets') m.innerHTML = renderSets();
+  else m.innerHTML = renderFocusBar() + (view.color == null ? renderColors() : renderColor(view.color));
+}
+
+const linkBtn = 'text-decoration:none;border:1px solid var(--line);background:var(--chip);border-radius:8px;padding:8px 12px';
+
+function noticeLinks(s) {
+  if (!s.notices?.length) return `<a class="b" style="${linkBtn}" href="https://www.lego.com/fr-fr/service/building-instructions/${esc(short(s.set_num))}" target="_blank">Notice (lego.com)</a>`;
+  return s.notices.map(b => `<a class="b" style="${linkBtn}" href="/api/notice/${b.id}.pdf" target="_blank">📖 Notice${b.total > 1 ? ` ${b.element}/${b.total}` : ''}${b.extra ? ' (annexe)' : ''}</a>`).join('');
+}
+
+function progress(n) {
+  const s = S.sets[n], total = s.parts.reduce((a, p) => a + p.qty, 0);
+  return { total, have: s.parts.reduce((a, p) => a + Math.min(p.qty, got(n, p.key)), 0) };
+}
+
+function renderFocusBar() {
+  const opts = [...new Set([...active(), view.focus].filter(Boolean))];
+  let h = `<div class="row" style="margin-bottom:10px"><select id="focus" class="grow">
+    <option value="">Tous les sets actifs (${active().length})</option>
+    ${opts.map(n => `<option value="${esc(n)}" ${n === view.focus ? 'selected' : ''}>${esc(short(n))} · ${esc(S.sets[n].name)}</option>`).join('')}
+  </select><button class="b" data-panel="identify" title="Identifier une pièce">📷</button></div>`;
+  if (view.focus) {
+    const s = S.sets[view.focus], { total, have } = progress(view.focus);
+    h += `<div class="card set"><div class="row"><img src="${esc(s.img)}" alt=""><div class="grow"><b>${esc(s.name)}</b>
+      <div class="mute">${esc(short(view.focus))} · ${s.year} · ${have}/${total} pièces</div>
+      <div class="bar"><i style="width:${(100 * have / total).toFixed(1)}%"></i></div></div></div>
+      <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px">${noticeLinks(s)}</div></div>`;
+  }
+  return h;
+}
+
+function renderSets() {
+  let h = `<form class="card row" id="add"><input class="grow" name="n" placeholder="N° de set (ex. 7256)" inputmode="numeric" autocomplete="off"><button class="b">Ajouter</button></form>
+  <div class="row" style="gap:8px;margin-bottom:10px"><button class="b grow" data-panel="fromPart">📷 Ajouter à partir d'une pièce</button>
+    <button class="b" data-panel="identify">📷 Identifier une pièce</button></div>`;
+  const act = active(), done = S.queue.filter(n => S.done.includes(n));
+  if (!S.queue.length) h += `<p class="mute" style="text-align:center;padding:40px 24px;opacity:.8">Aucun set pour l'instant.<br>Ajoute ton premier set avec son numéro, ou à partir de la photo d'une pièce.</p>`;
+  else if (!act.length) h += `<p class="mute" style="text-align:center;padding:24px;opacity:.8">Tous tes sets sont terminés 🎉</p>`;
+  else h += `<p class="mute">Ordre = priorité : une pièce trouvée va au premier set de la liste qui en a besoin.</p>`;
+  act.forEach((n, i) => {
+    const s = S.sets[n];
+    h += `<div class="card set">${setHeader(n, `${i + 1}. `)}
+      <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px">
+        <button class="b" data-up="${i}" ${i ? '' : 'disabled'}>↑</button><button class="b" data-down="${i}" ${i < act.length - 1 ? '' : 'disabled'}>↓</button>
+        <button class="b" data-build="${esc(n)}" style="background:var(--accent);color:#fff;border:0">🔍 Monter ce set</button>
+        ${noticeLinks(s)}
+        <button class="b" data-done="${esc(n)}">✅ Terminé</button>
+        <button class="b" data-rm="${esc(n)}" title="Supprimer">🗑️</button>
+      </div></div>`;
+  });
+  if (done.length) {
+    h += `<hr style="border:0;border-top:1px solid var(--line);margin:20px 0 12px"><div class="cat" style="margin-top:0">Terminés (${done.length})</div>`;
+    for (const n of done) h += `<div class="card set">${setHeader(n, '')}
+      <div class="row" style="margin-top:8px;gap:6px"><button class="b" data-done="${esc(n)}">♻️ Recommencer</button>
+        <button class="b" data-rm="${esc(n)}" title="Supprimer">🗑️</button></div></div>`;
+  }
+  if (S.queue.length) h += renderOrder();
+  return h;
+}
+
+function setHeader(n, prefix) {
+  const s = S.sets[n], { total, have } = progress(n), done = S.done.includes(n);
+  return `<div class="row"><img src="${esc(s.img)}" alt=""><div class="grow"><b>${prefix}${esc(s.name)}</b>
+    <div class="mute"><a href="${esc(s.url)}" target="_blank">${esc(n)}</a> · ${s.year} · ${have}/${total} pièces${done ? ' · ✅' : ''}</div>
+    <div class="bar"><i style="width:${(100 * have / total).toFixed(1)}%"></i></div></div></div>`;
+}
+
+function renderOrder() {
+  if (!orderOpen) return `<button class="b" id="order-open" style="width:100%">🛒 Commander les pièces manquantes…</button>`;
+  return `<div class="card"><div class="row"><b class="grow">🛒 Commande groupée BrickLink</b><button class="b" id="order-close">✕</button></div>
+    <p class="mute">Coche les sets à compléter : une seule wanted list avec les manquants additionnés. À importer sur BrickLink (Want › Upload).</p>
+    ${S.queue.map(n => {
+      const { total, have } = progress(n);
+      return `<label class="row" style="padding:6px 0"><input type="checkbox" class="order-set" value="${esc(n)}" ${total - have ? 'checked' : 'disabled'}>
+        <span class="grow">${esc(short(n))} · ${esc(S.sets[n].name)}</span><span class="mute">${total - have} manquantes</span></label>`;
+    }).join('')}
+    <button class="b" id="order-dl" style="margin-top:8px;width:100%">Télécharger la wanted list</button></div>`;
+}
+
+function renderIdent() {
+  const fromPart = panel === 'fromPart';
+  let h = `<div class="row" style="margin-bottom:10px"><button class="b" id="close-panel">‹ Retour</button>
+    <b class="grow">${fromPart ? 'Ajouter un set à partir d\'une pièce' : 'Identifier une pièce'}</b></div>
+    <label class="b" style="display:block;text-align:center;padding:16px;background:var(--accent);color:#fff;border:0;border-radius:12px;font-weight:600">
+      📷 Photographier une pièce<input type="file" accept="image/*" capture="environment" id="photo" hidden></label>
+    <p class="mute">${fromPart ? 'Choisis des pièces rares ou spécifiques. Chaque indice ajouté resserre la liste des sets possibles.'
+      : 'Pièce seule, sur fond uni, bien éclairée.'}</p>`;
+  if (ident) {
+    h += `<div class="card"><div class="row" style="align-items:flex-start"><img src="${ident.photo}" style="width:72px;height:72px;object-fit:cover;border-radius:6px">
+      <div class="grow"><b>Résultat Brickognize</b><div class="mute">Choisis la bonne pièce et sa couleur.</div></div></div>`;
+    if (!ident.items.length) h += `<p>Pièce non reconnue. Reprends la photo sur fond uni, pièce seule, bien éclairée.</p>`;
+    ident.items.forEach((it, i) => {
+      h += `<div class="part" data-sel="${i}" style="margin-top:8px;padding:6px;border-radius:8px;cursor:pointer;${i === ident.sel ? 'outline:2px solid var(--accent)' : ''}">
+        <img src="${esc(it.img)}" alt=""><div class="grow"><div>${esc(it.name)}</div><div class="mute">${esc(it.part_num)} · ${Math.round(it.score * 100)} %</div></div></div>`;
+    });
+    if (ident.items.length) {
+      const pcs = ident.partColors || [], predicted = ident.colors.filter(c => !pcs.length || pcs.some(p => p.color === c));
+      const others = pcs.filter(p => !predicted.includes(p.color));
+      h += `<div style="margin-top:10px"><div class="mute">Couleur${predicted.length ? ' (suggérées par la photo en premier)' : ''}</div>
+        <div class="chips" style="margin-top:6px">${predicted.map(c => colorChip(c)).join('')}</div>
+        ${pcs.length ? `<select id="other-color" style="margin-top:8px;width:100%"><option value="">Autre couleur…</option>
+          ${others.map(p => `<option value="${p.color}" ${p.color === ident.color ? 'selected' : ''}>${esc(S.colors[p.color]?.name || p.color)} (${p.num_sets} sets)</option>`).join('')}</select>` : '<div class="mute">Chargement des couleurs…</div>'}
+        ${fromPart ? `<button class="b" id="add-clue" style="margin-top:10px;width:100%" ${ident.color == null ? 'disabled' : ''}>➕ Ajouter comme indice</button>` : ''}</div>`;
+    }
+    h += `</div>`;
+    if (!fromPart && ident.items.length && ident.color != null) h += renderPartNeeds(ident.items[ident.sel], ident.color);
+  }
+  if (fromPart && S.clues.length) {
+    h += `<div class="row" style="margin-top:16px"><div class="cat grow" style="margin:0">Indices (${S.clues.length})</div><button class="b" id="clear-clues">Tout effacer</button></div>`;
+    S.clues.forEach((c, i) => {
+      h += `<div class="card part" style="margin-top:8px"><img src="${esc(c.img)}" alt="">${swatch(c.color)}<div class="grow"><div>${esc(c.name)}</div>
+        <div class="mute">${esc(c.part_num)} · ${esc(S.colors[c.color]?.name || '')}</div></div><button class="minus" data-unclue="${i}">✕</button></div>`;
+    });
+    h += `<div class="cat">Sets possibles${cands ? ` (${cands.total})` : ''}</div>`;
+    if (!cands) h += `<p class="mute">Recherche…</p>`;
+    else if (!cands.sets.length) h += `<p class="mute">Aucun set ne contient ces pièces dans ces couleurs.</p>`;
+    else for (const s of cands.sets) {
+      const inQueue = S.queue.includes(s.set_num);
+      h += `<div class="card set"><div class="row"><img src="${esc(s.set_img_url || '')}" alt="" loading="lazy"><div class="grow">
+        <b>${esc(s.name)}</b><div class="mute"><a href="${esc(s.set_url)}" target="_blank">${esc(short(s.set_num))}</a> · ${s.year} · ${s.num_parts} pièces</div>
+        <div class="mute">${esc(s.theme)}</div>
+        <div class="chips"><span class="chip ${s.matches === S.clues.length ? 'full' : ''}">${s.matches}/${S.clues.length} indices</span></div></div>
+        <button class="b" data-addset="${esc(s.set_num)}" ${inQueue ? 'disabled' : ''}>${inQueue ? '✓' : 'Ajouter'}</button></div></div>`;
+    }
+  }
+  return h;
+}
+
+// Identified part: links, and whether the sets in the list still need it
+function renderPartNeeds(it, color) {
+  const key = `${it.part_num}|${color}`, c = S.colors[color] || { name: color };
+  const per = active().flatMap(n => S.sets[n].parts.filter(p => p.key === key).map(p => ({ n, qty: p.qty, got: got(n, key) })));
+  const need = per.reduce((a, x) => a + x.qty, 0), have = per.reduce((a, x) => a + x.got, 0);
+  let h = `<div class="card"><b>${esc(it.name)}</b><div class="mute">${esc(it.part_num)} · ${esc(c.name)} ·
+    <a href="https://rebrickable.com/parts/${encodeURIComponent(it.part_num)}/" target="_blank">Rebrickable</a> ·
+    <a href="https://www.bricklink.com/v2/catalog/catalogitem.page?P=${encodeURIComponent(it.bl_id)}" target="_blank">BrickLink</a></div>`;
+  if (!per.length) return h + `<p class="mute">Aucun de tes sets actifs n'utilise cette pièce dans cette couleur.</p></div>`;
+  return h + `<div class="part" style="margin-top:8px"><div class="grow"><div>Utilisée par tes sets :</div>
+      <div class="chips">${per.map(x => `<span class="chip ${x.got >= x.qty ? 'full' : ''}">${short(x.n)} ${x.got}/${x.qty}</span>`).join('')}</div></div>
+      <button class="minus" data-minus="${esc(key)}" ${have ? '' : 'disabled'}>−</button>
+      <div class="need">${need - have}</div>
+      <button class="plus" data-plus="${esc(key)}" ${need - have ? '' : 'disabled'}>+</button></div></div>`;
+}
+
+function colorChip(id) {
+  const c = S.colors[id] || { name: id, rgb: 'ccc' };
+  return `<button class="b row" data-pickcolor="${id}" style="gap:6px;padding:6px 10px;${id === ident.color ? 'outline:2px solid var(--accent)' : ''}">
+    <span class="sw" style="width:18px;height:18px;background-color:#${c.rgb}"></span>${esc(c.name)}</button>`;
+}
+
+async function loadCands() {
+  if (!S.clues.length) { cands = null; return; }
+  cands = null; render();
+  cands = await api('/api/candidates'); render();
+}
+
+async function selectItem(i) {
+  ident.sel = i; ident.partColors = null;
+  ident.color = ident.colors[0] ?? null;
+  render();
+  ident.partColors = await api('/api/part_colors/' + encodeURIComponent(ident.items[i].part_num));
+  if (ident.color != null && !ident.partColors.some(p => p.color === ident.color)) ident.color = null;
+  render();
+}
+
+// Shrink phone photos before upload: Brickognize doesn't need 12 MP
+function shrink(file) {
+  return new Promise((ok, ko) => {
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, 1024 / Math.max(img.width, img.height)), c = document.createElement('canvas');
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      c.toBlob(b => ok({ blob: b, url: c.toDataURL('image/jpeg', .6) }), 'image/jpeg', .85);
+    };
+    img.onerror = ko;
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+function renderColors() {
+  const by = needs();
+  let rows = Object.entries(by).map(([id, parts]) => {
+    const list = Object.values(parts);
+    return { id, left: list.reduce((a, p) => a + Math.max(0, p.need - p.have), 0), total: list.reduce((a, p) => a + p.need, 0), kinds: list.length };
+  });
+  rows.sort((a, b) => b.left - a.left);
+  if (!rows.length) return `<p class="mute">Ajoute des sets dans l'onglet Sets.</p>`;
+  return `<p class="mute">Ouvre un sac de couleur, puis cherche les pièces listées.</p>` + rows.map(r => {
+    const c = S.colors[r.id] || { name: '?' }, look = lookalikes(r.id);
+    return `<div class="card row" data-color="${r.id}" style="cursor:pointer;${r.left ? '' : 'opacity:.45'}">${swatch(r.id)}
+      <div class="grow"><b>${esc(c.name)}</b><div class="mute">${r.kinds} réf. · reste ${r.left}/${r.total}</div>
+      ${look.length ? `<div class="warn">⚠ à ne pas confondre avec ${look.map(esc).join(', ')}</div>` : ''}</div><span>›</span></div>`;
+  }).join('');
+}
+
+function renderColor(id) {
+  const c = S.colors[id], parts = Object.values(needs()[id] || {}), look = lookalikes(id);
+  const byCat = {};
+  for (const p of parts) (byCat[S.categories[p.cat] || 'Autre'] ??= []).push(p);
+  let h = `<div class="row" style="margin-bottom:8px"><button class="b" id="back">‹ Couleurs</button>
+    <label class="tog"><input type="checkbox" id="hide" ${view.hideDone ? 'checked' : ''}> masquer les complètes</label></div>
+    <div class="card row">${swatch(id)}<div class="grow"><b>${esc(c.name)}</b> <span class="mute">#${c.rgb}</span>
+    ${look.length ? `<div class="warn">⚠ à ne pas confondre avec ${look.map(esc).join(', ')}</div>` : ''}</div></div>`;
+  for (const cat of Object.keys(byCat).sort()) {
+    let list = byCat[cat].sort((a, b) => a.name.localeCompare(b.name));
+    if (view.hideDone) list = list.filter(p => p.have < p.need);
+    if (!list.length) continue;
+    h += `<div class="cat">${esc(cat)}</div>`;
+    for (const p of list) {
+      const left = p.need - p.have;
+      h += `<div class="card part ${left ? '' : 'done'}">
+        <a href="${esc(p.url)}" target="_blank"><img src="${esc(p.img || '')}" alt="" loading="lazy"></a>
+        <div class="grow"><div>${esc(p.name)}</div><div class="mute">${esc(p.part_num)}</div>
+          <div class="chips">${p.per.map(x => `<span class="chip ${x.got >= x.qty ? 'full' : ''}">${short(x.n)} ${x.got}/${x.qty}</span>`).join('')}</div></div>
+        <button class="minus" data-minus="${esc(p.key)}" ${p.have ? '' : 'disabled'}>−</button>
+        <div class="need">${left}</div>
+        <button class="plus" data-plus="${esc(p.key)}" ${left ? '' : 'disabled'}>+</button></div>`;
+    }
+  }
+  return h;
+}
+
+document.addEventListener('click', async e => {
+  const t = e.target.closest('button,[data-color],[data-sel]'); if (!t) return;
+  const d = t.dataset;
+  try {
+    if (d.tab) { panel = null; view.tab = d.tab; view.color = null; localSet('tab', d.tab); render(); scrollTo(0, 0); }
+    else if (d.panel) {
+      panel = d.panel; ident = null; render(); scrollTo(0, 0);
+      if (panel === 'fromPart') await loadCands();
+    }
+    else if (t.id === 'close-panel') { panel = null; ident = null; render(); scrollTo(0, 0); }
+    else if (d.sel) await selectItem(+d.sel);
+    else if (d.pickcolor) { ident.color = +d.pickcolor; render(); }
+    else if (t.id === 'add-clue') {
+      const it = ident.items[ident.sel], pc = ident.partColors?.find(p => p.color === ident.color);
+      await api('/api/clues', { part_num: it.part_num, color: ident.color, name: it.name, img: pc?.img || it.img });
+      ident = null; await refresh(); await loadCands();
+    }
+    else if (d.unclue) { await api('/api/clues/remove', { index: +d.unclue }); await refresh(); await loadCands(); }
+    else if (t.id === 'clear-clues' && confirm('Effacer tous les indices ?')) { await api('/api/clues/clear', {}); await refresh(); await loadCands(); }
+    else if (d.addset) {
+      toast('Récupération de l\'inventaire…');
+      const r = await api('/api/sets', { set_num: d.addset }); await refresh(); toast(`${short(r.set_num)} ajouté à tes sets`);
+    }
+    else if (t.id === 'order-open' || t.id === 'order-close') { orderOpen = t.id === 'order-open'; render(); }
+    else if (t.id === 'order-dl') {
+      const sets = [...document.querySelectorAll('.order-set:checked')].map(i => i.value);
+      if (!sets.length) return toast('Coche au moins un set');
+      location.href = '/api/missing.xml?sets=' + encodeURIComponent(sets.join(','));
+    }
+    else if (d.color) { view.color = d.color; render(); scrollTo(0, 0); }
+    else if (t.id === 'back') { view.color = null; render(); }
+    else if (d.plus || d.minus) {
+      const r = await api('/api/pick', { key: d.plus || d.minus, delta: d.plus ? 1 : -1, set_num: view.focus || undefined });
+      if (r.set_num) toast(d.plus ? `→ sac ${short(r.set_num)} · ${S.sets[r.set_num].name}` : `← retirée du sac ${short(r.set_num)}`);
+      const y = scrollY; await refresh(); scrollTo(0, y);
+    }
+    else if (d.up || d.down) {
+      const act = active(), i = +(d.up ?? d.down), a = act[i], b = act[d.up ? i - 1 : i + 1];
+      const q = S.queue.map(x => x === a ? b : x === b ? a : x);
+      await api('/api/order', { queue: q }); await refresh();
+    }
+    else if (d.build) { setFocus(d.build); view.tab = 'pick'; view.color = null; localSet('tab', 'pick'); render(); scrollTo(0, 0); }
+    else if (d.done) { await api('/api/done', { set_num: d.done, done: !S.done.includes(d.done) }); await refresh(); }
+    else if (d.rm && confirm(`Retirer ${d.rm} et oublier sa progression ?`)) { await api('/api/remove', { set_num: d.rm }); await refresh(); }
+  } catch (err) { toast('Erreur : ' + err.message); }
+});
+document.addEventListener('change', e => {
+  if (e.target.id === 'focus') { setFocus(e.target.value); render(); return; }
+  if (e.target.id === 'other-color' && e.target.value) { ident.color = +e.target.value; render(); return; }
+  if (e.target.id === 'photo' && e.target.files[0]) { identify(e.target.files[0]); return; }
+  if (e.target.id === 'hide') { view.hideDone = e.target.checked; localSet('hideDone', view.hideDone ? '1' : '0'); render(); }
+});
+async function identify(file) {
+  try {
+    toast('Analyse Brickognize…');
+    const { blob, url } = await shrink(file);
+    const r = await fetch('/api/identify', { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: blob });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.status);
+    ident = { photo: url, items: j.items, colors: j.colors, sel: 0, color: j.colors[0] ?? null, partColors: null };
+    render();
+    if (j.items.length) await selectItem(0);
+  } catch (err) { toast('Erreur : ' + err.message); }
+}
+
+document.addEventListener('submit', async e => {
+  e.preventDefault();
+  const inp = e.target.n, n = inp.value.trim(); if (!n) return;
+  inp.disabled = true; toast('Récupération de l\'inventaire…');
+  try { const r = await api('/api/sets', { set_num: n }); await refresh(); toast(`${r.set_num} ajouté`); }
+  catch (err) { toast(err.message); inp.disabled = false; }
+});
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+refresh().catch(err => { $('#main').textContent = 'Erreur : ' + err.message; });
+</script>
+</body>
+</html>
