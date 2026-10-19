@@ -15,27 +15,37 @@ L'app récupère l'inventaire d'un set (Rebrickable) et sort une **liste de coll
 
 ## Lancer
 
-Python 3.12+, aucune dépendance.
+Il faut une clé API Rebrickable (gratuite : rebrickable.com → Settings → API).
 
 ```sh
-echo "REBRICKABLE_API_KEY=xxxx" > .env   # clé gratuite : rebrickable.com → Settings → API
-python3 server.py                         # http://<ip-de-la-machine>:8642
+git clone git@github.com:Firnael/brique-a-brac.git && cd brique-a-brac
+echo "REBRICKABLE_API_KEY=xxxx" > .env
 ```
 
-Avec Docker (ex. sur Proxmox) :
+**Avec Docker** (recommandé, ex. sur Proxmox) :
 
 ```sh
-docker build -t brique-a-brac .
-docker run -d -p 8642:8642 -v brique-data:/data -e REBRICKABLE_API_KEY=xxxx brique-a-brac
+docker compose up -d                 # http://<ip-de-la-machine>:8642
+git pull && docker compose up -d --build   # mise à jour
+```
+
+Le conteneur redémarre tout seul (reboot, crash). Autre port : `PORT=8080 docker compose up -d`.
+
+**Sans Docker** : Python 3.12+, aucune dépendance.
+
+```sh
+python3 server.py                    # http://<ip-de-la-machine>:8642
 ```
 
 ## Données
 
-Tout est dans `data/` (ignoré par git) :
+Tout est dans le dossier `data/` à côté de `docker-compose.yml`, même avec Docker (ignoré par git) :
 
 - `state.json` : sets, priorité, pièces collectées, sets terminés, indices.
 - `backups/` : copie de `state.json` avant la première modif de chaque jour, 14 jours gardés.
 - `cache/` : réponses Rebrickable, pages de notices et PDF. Peut être supprimé sans risque.
+
+Sauvegarder = copier `data/state.json`. Changer de machine = copier `data/` dans le nouveau clone avant `docker compose up -d`.
 
 ## Sources
 

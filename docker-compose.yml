@@ -1,0 +1,10 @@
+services:
+  brique-a-brac:
+    build: .
+    container_name: brique-a-brac
+    ports:
+      - "${PORT:-8642}:8642"
+    env_file: .env
+    volumes:
+      - ./data:/data
+    restart: unless-stopped
